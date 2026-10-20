@@ -27,6 +27,16 @@ final class AnnotationBoard: NSView {
     private var movingOrigin = CGPoint.zero
     private var movedTextBox = false
     var pasteboard = NSPasteboard.general
+    var showsBoxOutlines = false {
+        didSet { updateBoxOutlines() }
+    }
+    private func updateBoxOutlines() {
+        for box in boxes {
+            box.wantsLayer = true
+            box.layer?.borderColor = NSColor.systemBlue.withAlphaComponent(0.7).cgColor
+            box.layer?.borderWidth = showsBoxOutlines ? 1 : 0
+        }
+    }
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
     init(frame:CGRect, selection:CGRect) {
@@ -88,9 +98,9 @@ final class AnnotationBoard: NSView {
             let font = NSFont(name:"TimesNewRomanPSMT",size:10) ?? NSFont(name:"Times New Roman",size:10) ?? NSFont(name:"Times-Roman",size:10)!
             let isFill = mark.kind == .fill
             let answerText = isFill ? mark.text.components(separatedBy:.newlines).joined(separator:" ") : mark.text
-            let naturalWidth = ceil((answerText as NSString).size(withAttributes:[.font:font]).width) + 16
+            let naturalWidth = ceil((answerText as NSString).size(withAttributes:[.font:font]).width) + (isFill ? 6 : 16)
             var width = min(isFill ? naturalWidth : max(mark.width/1000*selection.width,200),bounds.width-16)
-            var textHeight = isFill ? ceil(font.ascender-font.descender+font.leading)+16 : (answerText as NSString).boundingRect(with:NSSize(width:width-20,height:CGFloat.greatestFiniteMagnitude),options:[.usesLineFragmentOrigin,.usesFontLeading],attributes:[.font:font]).height + 20
+            var textHeight = isFill ? ceil(font.ascender-font.descender+font.leading)+4 : (answerText as NSString).boundingRect(with:NSSize(width:width-20,height:CGFloat.greatestFiniteMagnitude),options:[.usesLineFragmentOrigin,.usesFontLeading],attributes:[.font:font]).height + 20
             let height = isFill ? textHeight : min(max(mark.height/1000*selection.height,textHeight,32),min(480,bounds.height-32))
             var frame = CGRect(x:max(8,min(origin.x,bounds.width-width-8)),y:max(8,min(origin.y,bounds.height-height-8)),width:width,height:height)
             var occupied = boxes.map { $0.frame }
@@ -98,28 +108,26 @@ final class AnnotationBoard: NSView {
                 occupied.append(CGRect(x:20,y:bounds.height-76,width:min(700,bounds.width-40),height:56))
             }
             let blankArea = CGRect(origin:origin,size:CGSize(width:mark.width/1000*selection.width,height:mark.height/1000*selection.height))
-            let fitsBlank = isFill && blankArea.contains(frame) && selection.contains(frame) &&
-                naturalWidth <= frame.width && !occupied.contains { $0.intersects(frame) }
-            var fitsBelow = false
-            if isFill && !fitsBlank, let area = mark.belowArea {
-                let available = CGRect(origin:markPoint(x:area.x,y:area.y,selection:selection),
-                                       size:CGSize(width:area.width/1000*selection.width,height:area.height/1000*selection.height))
-                let candidate = CGRect(x:origin.x,y:available.minY,width:naturalWidth,height:textHeight)
-                if available.contains(candidate) && bounds.insetBy(dx:8,dy:8).contains(candidate) &&
-                    !occupied.contains(where: { $0.insetBy(dx:-6,dy:-6).intersects(candidate) }) {
-                    frame = candidate; width = frame.width; fitsBelow = true
-                }
-            }
-            if manualFrames[mark] == nil && !fitsBlank && !fitsBelow {
-                guard let free = freeAnswerRect(size:CGSize(width:isFill ? naturalWidth : width,height:textHeight),near:origin,
-                                               bounds:bounds,protected:selection,occupied:occupied,
-                                               minimum:CGSize(width:isFill ? min(naturalWidth,40) : min(width,60),
-                                                              height:isFill ? textHeight : min(textHeight,ceil(font.ascender-font.descender+font.leading)+16))) else {
-                    layoutWarning = "选区外没有足够的作答空间，请缩小选区或移动题目后重试。"
-                    continue
-                }
-                frame = free; width = frame.width
-                if !isFill {
+            if manualFrames[mark] == nil {
+                if isFill {
+                    let below = mark.belowArea.map { area in
+                        CGRect(origin:markPoint(x:area.x,y:area.y,selection:selection),
+                               size:CGSize(width:area.width/1000*selection.width,height:area.height/1000*selection.height))
+                    }
+                    guard let nearby = fillAnswerRect(size:CGSize(width:naturalWidth,height:textHeight),blank:blankArea,
+                                                      below:below,selection:selection.intersection(bounds),occupied:occupied) else {
+                        layoutWarning = "填空作答区附近空间不足，请扩大圈选以包含空格下方留白。"
+                        continue
+                    }
+                    frame = nearby; width = frame.width
+                } else {
+                    guard let free = freeAnswerRect(size:CGSize(width:width,height:textHeight),near:origin,
+                                                   bounds:bounds,protected:selection,occupied:occupied,
+                                                   minimum:CGSize(width:min(width,60),height:min(textHeight,ceil(font.ascender-font.descender+font.leading)+16))) else {
+                        layoutWarning = "选区外没有足够的作答空间，请缩小选区或移动题目后重试。"
+                        continue
+                    }
+                    frame = free; width = frame.width
                     textHeight = (answerText as NSString).boundingRect(with:NSSize(width:width-20,height:CGFloat.greatestFiniteMagnitude),options:[.usesLineFragmentOrigin,.usesFontLeading],attributes:[.font:font]).height+20
                 }
             }
@@ -142,7 +150,7 @@ final class AnnotationBoard: NSView {
             let text = NSTextView(frame:CGRect(origin:.zero,size:NSSize(width:width,height:visibleHeight)))
             text.isEditable = false; text.isSelectable = true
             text.font = font; text.textColor = .darkGray; text.drawsBackground = false; text.backgroundColor = .clear
-            text.textContainerInset = NSSize(width:8,height:8)
+            text.textContainerInset = isFill ? NSSize(width:3,height:2) : NSSize(width:8,height:8)
             text.textContainer?.lineFragmentPadding = 0
             text.textContainer?.widthTracksTextView = !isFill
             if isFill {
@@ -162,7 +170,7 @@ final class AnnotationBoard: NSView {
             links.append(NSAttributedString(string:"[\(index+1)] \(url.host ?? "来源")  ",attributes:[.link:url,.font:NSFont.systemFont(ofSize:12)]))
         }
         sourcesView.textStorage?.setAttributedString(links)
-        updateVisibility(); needsDisplay = true
+        updateBoxOutlines(); updateVisibility(); needsDisplay = true
     }
     func setStatus(_ text:String, failed:Bool = false) {
         statusLabel.stringValue = text.isEmpty ? (layoutWarning ?? "") : text; statusFailed = failed
@@ -236,7 +244,7 @@ final class AnnotationBoard: NSView {
             path.move(to:CGPoint(x:tip.x-30,y:tip.y)); path.line(to:tip)
             path.move(to:CGPoint(x:tip.x-8,y:tip.y-6)); path.line(to:tip); path.line(to:CGPoint(x:tip.x-8,y:tip.y+6))
             path.lineCapStyle = .round; path.lineJoinStyle = .round
-            NSColor.darkGray.setStroke()
+            NSColor.red.setStroke()
             path.lineWidth = 1 / max(window?.backingScaleFactor ?? 1,1)
             path.stroke()
         }

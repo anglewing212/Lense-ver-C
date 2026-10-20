@@ -35,3 +35,16 @@ func clampedBoxOrigin(_ origin:CGPoint,size:CGSize,bounds:CGRect) -> CGPoint {
     CGPoint(x:max(bounds.minX,min(origin.x,bounds.maxX-size.width)),
             y:max(bounds.minY,min(origin.y,bounds.maxY-size.height)))
 }
+
+func fillAnswerRect(size:CGSize, blank:CGRect, below:CGRect?, selection:CGRect, occupied:[CGRect]) -> CGRect? {
+    func usable(_ rect:CGRect) -> Bool {
+        selection.contains(rect) && !occupied.contains { $0.insetBy(dx:-2,dy:-2).intersects(rect) }
+    }
+    let inline = CGRect(origin:blank.origin,size:size)
+    if blank.contains(inline) && usable(inline) { return inline }
+    let available = below ?? CGRect(x:selection.minX,y:blank.maxY+2,width:selection.width,
+                                    height:max(0,selection.maxY-blank.maxY-2))
+    let candidate = CGRect(x:max(available.minX,min(blank.minX,available.maxX-size.width)),
+                           y:available.minY,width:size.width,height:size.height)
+    return available.contains(candidate) && usable(candidate) ? candidate : nil
+}

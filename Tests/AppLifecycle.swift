@@ -30,6 +30,21 @@ import AppKit
             assert(owner.overlays.first?.contentView === board)
             owner.toggleOverlay()
             assert(owner.session.isVisible && panel.isVisible)
+            assert(panel.level == .floating)
+            let savedMarks = board.marks.arrows
+            let foreignOverlay: [String:Any] = [kCGWindowOwnerPID as String:999999,
+                kCGWindowLayer as String:1000, kCGWindowBounds as String:NSScreen.main!.frame.dictionaryRepresentation]
+            owner.checkExternalOverlays(windows:[foreignOverlay])
+            assert(owner.yieldsToExternalOverlay && panel.ignoresMouseEvents && owner.bubble.ignoresMouseEvents)
+            assert(owner.session.isVisible && panel.isVisible && board.marks.arrows == savedMarks)
+            owner.checkExternalOverlays(windows:[])
+            assert(!owner.yieldsToExternalOverlay && !panel.ignoresMouseEvents && !owner.bubble.ignoresMouseEvents)
+            assert(owner.session.isVisible && board.marks.arrows == savedMarks)
+            owner.checkExternalOverlays(windows:[foreignOverlay]); owner.dismiss()
+            owner.checkExternalOverlays(windows:[])
+            assert(!owner.session.isVisible && !owner.yieldsToExternalOverlay)
+            owner.toggleOverlay()
+            print("Passed: external overlays get input priority without closing canvas or clearing answers; ending them restores interaction and never reopens a dismissed canvas")
             @MainActor func mouse(_ type:NSEvent.EventType,_ x:CGFloat,_ y:CGFloat) -> NSEvent {
                 NSEvent.mouseEvent(with:type,location:CGPoint(x:x,y:y),modifierFlags:[],timestamp:0,
                                    windowNumber:panel.windowNumber,context:nil,eventNumber:1,clickCount:1,pressure:1)!
@@ -98,10 +113,26 @@ import AppKit
             let fillText = fillScroll.documentView as! NSTextView
             assert(fillText.textColor == NSColor.darkGray)
             assert(fillText.font?.fontName == "TimesNewRomanPSMT" && fillText.font?.pointSize == 10)
-            let requiredWidth = ceil((fillText.string as NSString).size(withAttributes:[.font:fillText.font!]).width)+16
+            let requiredWidth = ceil((fillText.string as NSString).size(withAttributes:[.font:fillText.font!]).width)+6
             assert(fillScroll.frame.width >= requiredWidth && fillText.textContainer?.maximumNumberOfLines == 1)
-            assert(!fillScroll.frame.intersects(board.selection))
-            let originalContent = fillText.string
+            assert(board.selection.contains(fillScroll.frame))
+            owner.checkExternalOverlays(windows:[])
+            owner.handleShortcut(.command)
+            assert(board.showsBoxOutlines && fillScroll.layer?.borderWidth == 1)
+            owner.handleShortcut([])
+            assert(!board.showsBoxOutlines && fillScroll.layer?.borderWidth == 0)
+            owner.handleShortcut(.command)
+            let outlined = fillScroll
+            assert(outlined.layer?.borderWidth == 1)
+            owner.dismiss()
+            assert(!board.showsBoxOutlines && outlined.layer?.borderWidth == 0)
+            owner.handleShortcut(.command)
+            assert(!board.showsBoxOutlines)
+            owner.toggleOverlay(); owner.handleShortcut([])
+            print("Passed: holding Command reveals textbox outlines, release and hiding remove them, new answer updates retain held-key outlines")
+            let currentFillScroll = board.subviews.compactMap { $0 as? NSScrollView }.first!
+            let currentFillText = currentFillScroll.documentView as! NSTextView
+            let originalContent = currentFillText.string
             let initialFrame = fillScroll.frame
             board.pasteboard = NSPasteboard.withUniqueName()
             let textPoint = CGPoint(x:initialFrame.midX,y:initialFrame.midY)
@@ -113,7 +144,7 @@ import AppKit
             board.mouseDown(with:mouse(.leftMouseDown,textPoint.x,startY))
             board.mouseUp(with:mouse(.leftMouseUp,textPoint.x+70,startY))
             assert(board.pasteboard.string(forType:.string) == "unchanged")
-            assert(!fillScroll.frame.intersects(board.selection))
+            assert(board.selection.contains(fillScroll.frame))
             assert(fillScroll.frame.origin != initialFrame.origin && fillText.string == originalContent)
             assert(board.bounds.contains(fillScroll.frame) && sends == 1)
             let safeFrame = fillScroll.frame
@@ -130,9 +161,10 @@ import AppKit
             var blanks = BoardMarks()
             blanks.boxes = [TextMark(x:100,y:100,width:500,height:100,kind:.fill,lines:["Paris"],questionPrefix:"1.",blankIndex:1),
                             TextMark(x:100,y:300,width:500,height:100,kind:.fill,lines:["London"],questionPrefix:"1.",blankIndex:2)]
+            inlineBoard.showsBoxOutlines = true
             inlineBoard.show(blanks,sources:[])
             let inlineBoxes = inlineBoard.subviews.compactMap { $0 as? NSScrollView }
-            assert(inlineBoxes.count == 2 && inlineBoxes.allSatisfy { inlineBoard.selection.contains($0.frame) })
+            assert(inlineBoxes.count == 2 && inlineBoxes.allSatisfy { inlineBoard.selection.contains($0.frame) && $0.layer?.borderWidth == 1 })
             assert((inlineBoxes[0].documentView as! NSTextView).string == "1.1 Paris")
             assert((inlineBoxes[1].documentView as! NSTextView).string == "1.2 London")
             print("Passed: numbered fill answers occupy actual blank areas, ordered independently per question")
@@ -146,11 +178,14 @@ import AppKit
             belowMarks.boxes.append(TextMark(x:100,y:100,width:10,height:50,kind:.fill,lines:["London"],questionPrefix:"1.",blankIndex:2,belowArea:belowArea))
             inlineBoard.show(belowMarks,sources:[])
             let orderedBoxes = inlineBoard.subviews.compactMap { $0 as? NSScrollView }
-            assert(orderedBoxes.count == 2 && !orderedBoxes[1].frame.intersects(inlineBoard.selection))
+            assert(orderedBoxes.count == 1 && !inlineBoard.statusLabel.isHidden)
             belowMarks.boxes = [TextMark(x:100,y:100,width:10,height:50,kind:.fill,lines:["Paris"],belowArea:.init(x:100,y:200,width:10,height:10))]
             inlineBoard.show(belowMarks,sources:[])
-            assert(!inlineBoard.selection.intersects(inlineBoard.subviews.compactMap { $0 as? NSScrollView }.first!.frame))
-            print("Passed: fill placement tries blank, then full answer directly below, then safe space outside selection when below is occupied or too small")
+            assert(!inlineBoard.subviews.contains { $0 is NSScrollView } && !inlineBoard.statusLabel.isHidden)
+            print("Passed: fill placement tries blank, then full answer directly below, never outside selection; unavailable nearby space shows a warning")
+            belowMarks.boxes = [TextMark(x:100,y:900,width:10,height:100,kind:.fill,lines:["Paris"])]
+            inlineBoard.show(belowMarks,sources:[])
+            assert(!inlineBoard.subviews.contains { $0 is NSScrollView })
             var multiple = BoardMarks()
             multiple.boxes = [TextMark(x:100,y:100,width:500,height:500,kind:.short,lines:["An answer that needs more room."]),
                               TextMark(x:200,y:200,width:10,height:10,kind:.math,lines:["2x + 3 = 11","x = 4"])]

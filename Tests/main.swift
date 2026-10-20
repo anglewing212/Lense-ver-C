@@ -211,3 +211,14 @@ withBelow["below_area"] = ["x":100,"y":400,"width":300,"height":100]
 var belowValidated = BoardMarks()
 try belowValidated.apply(name:"place_textboxes",arguments:arguments(["boxes":[withBelow]]))
 assert(belowValidated.boxes[0].belowArea?.y == 400)
+
+let singleFill = TextMark(x:0,y:0,width:300,height:100,kind:.fill,lines:["Paris"],questionPrefix:"6.")
+assert(singleFill.text == "6 Paris")
+assert(TextMark(x:0,y:0,width:300,height:100,kind:.fill,lines:["Paris"],questionPrefix:"6.",blankIndex:1).text == "6.1 Paris")
+
+let fillCrop = CGRect(x:100,y:100,width:500,height:300)
+let blankSlot = CGRect(x:200,y:200,width:30,height:20)
+assert(fillAnswerRect(size:CGSize(width:25,height:16),blank:blankSlot,below:nil,selection:fillCrop,occupied:[]) == CGRect(x:200,y:200,width:25,height:16))
+assert(fillAnswerRect(size:CGSize(width:100,height:16),blank:blankSlot,below:nil,selection:fillCrop,occupied:[]) == CGRect(x:200,y:222,width:100,height:16))
+assert(fillAnswerRect(size:CGSize(width:600,height:16),blank:blankSlot,below:nil,selection:fillCrop,occupied:[]) == nil)
+assert(fillAnswerRect(size:CGSize(width:100,height:16),blank:CGRect(x:200,y:385,width:30,height:15),below:nil,selection:fillCrop,occupied:[]) == nil)

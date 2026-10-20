@@ -18,6 +18,8 @@ final class KeyPanel: NSPanel { override var canBecomeKey: Bool { true } }
     var session = CanvasSession()
     var permissionRequest = PermissionRequestGate()
     private var visibilityRevision = UUID()
+    private var overlayWatch: Timer?
+    private(set) var yieldsToExternalOverlay = false
     func applicationDidFinishLaunching(_ notification: Notification) {
         let mainMenu = NSMenu()
         let appItem = NSMenuItem()
@@ -47,6 +49,9 @@ final class KeyPanel: NSPanel { override var canBecomeKey: Bool { true } }
         bubble.contentView = bubbleView
         if let screen = NSScreen.main { bubble.setFrameOrigin(CGPoint(x:screen.visibleFrame.maxX-60,y:screen.visibleFrame.midY)); bubbleView.dock(to:.right) }
         bubble.orderFrontRegardless()
+        overlayWatch = Timer.scheduledTimer(withTimeInterval:0.15,repeats:true) { [weak self] _ in
+            Task { @MainActor in self?.checkExternalOverlays() }
+        }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
             self?.handleShortcut(event.modifierFlags)
             return event
@@ -57,10 +62,39 @@ final class KeyPanel: NSPanel { override var canBecomeKey: Bool { true } }
         }
     }
     func handleShortcut(_ flags: NSEvent.ModifierFlags) {
+        for panel in overlays {
+            (panel.contentView as? AnnotationBoard)?.showsBoxOutlines = session.isVisible && !yieldsToExternalOverlay && flags.contains(.command)
+        }
         if shortcut.update(control: flags.contains(.control), option: flags.contains(.option),
                            otherModifiers: !flags.intersection([.command, .shift]).isEmpty) {
             toggleOverlay()
         }
+    }
+
+    func checkExternalOverlays(windows:[[String:Any]]? = nil) {
+        guard session.isVisible else { return }
+        let list = windows ?? (CGWindowListCopyWindowInfo([.optionOnScreenOnly,.excludeDesktopElements],kCGNullWindowID) as? [[String:Any]] ?? [])
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let blocked = list.contains { item in
+            guard let pid = item[kCGWindowOwnerPID as String] as? Int, pid != ownPID,
+                  let layer = item[kCGWindowLayer as String] as? Int, layer >= Int(NSWindow.Level.floating.rawValue),
+                  let dictionary = item[kCGWindowBounds as String] as? NSDictionary,
+                  let rect = CGRect(dictionaryRepresentation:dictionary) else { return false }
+            return NSScreen.screens.contains { screen in
+                let screenRect = CGRect(x:screen.frame.minX,y:(NSScreen.screens.first?.frame.maxY ?? 0)-screen.frame.maxY,width:screen.frame.width,height:screen.frame.height)
+                let area = rect.intersection(screenRect)
+                return !area.isNull && area.width >= 200 && area.height >= 100 && area.width*area.height >= screen.frame.width*screen.frame.height*0.15
+            }
+        }
+        guard blocked != yieldsToExternalOverlay else { return }
+        yieldsToExternalOverlay = blocked
+        for panel in overlays {
+            panel.ignoresMouseEvents = blocked
+            (panel.contentView as? AnnotationBoard)?.showsBoxOutlines = !blocked && NSEvent.modifierFlags.contains(.command)
+            if blocked { panel.resignKey() }
+            else { panel.makeKeyAndOrderFront(nil); panel.makeFirstResponder(panel.contentView) }
+        }
+        bubble.ignoresMouseEvents = blocked
     }
 
     func panel(frame:CGRect) -> NSPanel {
@@ -68,7 +102,7 @@ final class KeyPanel: NSPanel { override var canBecomeKey: Bool { true } }
         p.hidesOnDeactivate = false
         p.ignoresMouseEvents = false; p.hasShadow = false
         p.becomesKeyOnlyIfNeeded = false
-        p.isOpaque = false; p.backgroundColor = .clear; p.level = .screenSaver
+        p.isOpaque = false; p.backgroundColor = .clear; p.level = .floating
         p.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary]; p.isReleasedWhenClosed = false
         return p
     }
@@ -81,7 +115,9 @@ final class KeyPanel: NSPanel { override var canBecomeKey: Bool { true } }
     func dismiss() {
         visibilityRevision = UUID(); let revision = visibilityRevision
         session.isVisible = false
+        yieldsToExternalOverlay = false; bubble.ignoresMouseEvents = false
         for panel in overlays {
+            (panel.contentView as? AnnotationBoard)?.showsBoxOutlines = false
             panel.ignoresMouseEvents = true
             guard panel.isVisible else { continue }
             NSAnimationContext.runAnimationGroup { context in
@@ -112,6 +148,7 @@ final class KeyPanel: NSPanel { override var canBecomeKey: Bool { true } }
         NSApp.activate(ignoringOtherApps:true)
         for panel in overlays {
             if !panel.isVisible { panel.alphaValue = 0 }
+            (panel.contentView as? AnnotationBoard)?.showsBoxOutlines = NSEvent.modifierFlags.contains(.command)
             panel.ignoresMouseEvents = false
             panel.makeKeyAndOrderFront(nil); panel.makeFirstResponder(panel.contentView)
             NSAnimationContext.runAnimationGroup { context in
@@ -120,8 +157,9 @@ final class KeyPanel: NSPanel { override var canBecomeKey: Bool { true } }
                 panel.animator().alphaValue = 1
             }
         }
+        checkExternalOverlays()
         bubbleView.isOverlayActive = true
-        bubble.level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
+        bubble.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
         bubble.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps:true)
     }
@@ -189,6 +227,7 @@ final class KeyPanel: NSPanel { override var canBecomeKey: Bool { true } }
         overlays.forEach { $0.close() }; overlays.removeAll()
         let p = panel(frame:screen.frame)
         let board = AnnotationBoard(frame:CGRect(origin:.zero,size:screen.frame.size),selection:rect)
+        board.showsBoxOutlines = session.isVisible && NSEvent.modifierFlags.contains(.command)
         board.close = { [weak self] in self?.dismiss() }
         board.reselect = { [weak self] in
             guard let self else { return }
@@ -199,6 +238,7 @@ final class KeyPanel: NSPanel { override var canBecomeKey: Bool { true } }
         p.contentView = board; overlays = [p]
         if session.isVisible { p.makeKeyAndOrderFront(nil); p.makeFirstResponder(board) }
         bubbleView.isOverlayActive = session.isVisible; bubble.orderFrontRegardless()
+        checkExternalOverlays()
         return board
     }
     func showBoardError(_ message:String,rect:CGRect,screen:NSScreen) {

@@ -34,7 +34,7 @@ struct TextMark: Codable, Equatable, Hashable {
         if kind == .fill {
             let digits = "0-9０-９零〇一二三四五六七八九十百千万"
             if let range = prefix.range(of:"["+digits+"]+(?:[.．]["+digits+"]+)*",options:.regularExpression) {
-                return String(prefix[range]) + "." + String(blankIndex ?? 1) + " " + answer
+                return String(prefix[range]) + (blankIndex.map { "." + String($0) } ?? "") + " " + answer
             }
         }
         return prefix + " " + answer
