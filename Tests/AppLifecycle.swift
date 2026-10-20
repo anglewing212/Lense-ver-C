@@ -92,7 +92,7 @@ import AppKit
             assert(sends == 1)
             board.keyDown(with:escape)
             var fillMarks = BoardMarks()
-            fillMarks.boxes = [TextMark(x:100,y:100,width:10,height:50,kind:.fill,lines:["A complete single line answer"])]
+            fillMarks.boxes = [TextMark(x:100,y:100,width:10,height:50,kind:.fill,lines:["A complete single line answer"],supplements:[.init(point:1,kind:.explanation,sentence:"A useful clarification.")])]
             board.show(fillMarks,sources:[])
             let fillScroll = board.subviews.compactMap { $0 as? NSScrollView }.first!
             let fillText = fillScroll.documentView as! NSTextView
@@ -119,13 +119,38 @@ import AppKit
             let safeFrame = fillScroll.frame
             board.mouseDown(with:mouse(.leftMouseDown,safeFrame.midX,board.bounds.height-safeFrame.midY))
             board.mouseUp(with:mouse(.leftMouseUp,safeFrame.midX,board.bounds.height-board.selection.midY))
-            assert(fillScroll.frame == safeFrame)
+            assert(board.selection.intersects(fillScroll.frame))
             let movedFrame = fillScroll.frame
             board.show(fillMarks,sources:[])
             let restoredScroll = board.subviews.compactMap { $0 as? NSScrollView }.first!
             assert(restoredScroll.frame == movedFrame)
             assert((restoredScroll.documentView as! NSTextView).string == originalContent)
             print("Passed: textbox dragging keeps answer content, stays on canvas, preserves its position across updates and never submits a new question")
+            let inlineBoard = AnnotationBoard(frame:CGRect(x:0,y:0,width:1000,height:800),selection:CGRect(x:200,y:180,width:600,height:400))
+            var blanks = BoardMarks()
+            blanks.boxes = [TextMark(x:100,y:100,width:500,height:100,kind:.fill,lines:["Paris"],questionPrefix:"1.",blankIndex:1),
+                            TextMark(x:100,y:300,width:500,height:100,kind:.fill,lines:["London"],questionPrefix:"1.",blankIndex:2)]
+            inlineBoard.show(blanks,sources:[])
+            let inlineBoxes = inlineBoard.subviews.compactMap { $0 as? NSScrollView }
+            assert(inlineBoxes.count == 2 && inlineBoxes.allSatisfy { inlineBoard.selection.contains($0.frame) })
+            assert((inlineBoxes[0].documentView as! NSTextView).string == "1.1 Paris")
+            assert((inlineBoxes[1].documentView as! NSTextView).string == "1.2 London")
+            print("Passed: numbered fill answers occupy actual blank areas, ordered independently per question")
+            var belowMarks = BoardMarks()
+            let belowArea = TextMark.AnswerArea(x:100,y:200,width:600,height:120)
+            belowMarks.boxes = [TextMark(x:100,y:100,width:10,height:50,kind:.fill,lines:["Paris"],questionPrefix:"1.",blankIndex:1,belowArea:belowArea)]
+            inlineBoard.show(belowMarks,sources:[])
+            let belowBox = inlineBoard.subviews.compactMap { $0 as? NSScrollView }.first!
+            assert(belowBox.frame.minX == 260 && belowBox.frame.minY == 260)
+            assert(inlineBoard.selection.contains(belowBox.frame))
+            belowMarks.boxes.append(TextMark(x:100,y:100,width:10,height:50,kind:.fill,lines:["London"],questionPrefix:"1.",blankIndex:2,belowArea:belowArea))
+            inlineBoard.show(belowMarks,sources:[])
+            let orderedBoxes = inlineBoard.subviews.compactMap { $0 as? NSScrollView }
+            assert(orderedBoxes.count == 2 && !orderedBoxes[1].frame.intersects(inlineBoard.selection))
+            belowMarks.boxes = [TextMark(x:100,y:100,width:10,height:50,kind:.fill,lines:["Paris"],belowArea:.init(x:100,y:200,width:10,height:10))]
+            inlineBoard.show(belowMarks,sources:[])
+            assert(!inlineBoard.selection.intersects(inlineBoard.subviews.compactMap { $0 as? NSScrollView }.first!.frame))
+            print("Passed: fill placement tries blank, then full answer directly below, then safe space outside selection when below is occupied or too small")
             var multiple = BoardMarks()
             multiple.boxes = [TextMark(x:100,y:100,width:500,height:500,kind:.short,lines:["An answer that needs more room."]),
                               TextMark(x:200,y:200,width:10,height:10,kind:.math,lines:["2x + 3 = 11","x = 4"])]

@@ -61,10 +61,47 @@ for invalid in [box("short",Array(repeating:"一句。",count:6)), box("long",Ar
 assert(marks.boxes.count == before)
 do { try marks.apply(name:"place_arrows",arguments:"{\"arrows\":[{\"x\":-1,\"y\":0}]}"); fatalError("Expected out-of-range rejection") } catch {}
 do { try marks.apply(name:"unknown",arguments:"{}"); fatalError("Expected unknown tool rejection") } catch {}
+for (kind, limit) in [("short",5),("long",10)] {
+    var answer = box(kind,Array(repeating:"A main point.",count:limit))
+    answer["supplements"] = (1...limit).map { ["point":$0,"kind":"example","sentence":"For example, consider a tree."] as [String:Any] }
+    var supplemented = BoardMarks()
+    try supplemented.apply(name:"place_textboxes",arguments:arguments(["boxes":[answer]]))
+    assert(supplemented.boxes[0].text.components(separatedBy:"For example").count == limit+1)
+    assert(supplemented.boxes[0].lines.count == limit)
+    for invalidExtras: [[String:Any]] in [
+        [["point":1,"kind":"example","sentence":"First example. Second example."]],
+        [["point":1,"kind":"example","sentence":"一。二。"]],
+        [["point":1,"kind":"example","sentence":""]],
+        [["point":0,"kind":"example","sentence":"Example."]],
+        [["point":limit+1,"kind":"example","sentence":"Example."]],
+        [["point":1,"kind":"explanation","sentence":"Explanation."],["point":1,"kind":"example","sentence":"Example."]],
+        [["point":1,"kind":"mixed","sentence":"Mixed."]]
+    ] {
+        answer["supplements"] = invalidExtras
+        do { try supplemented.apply(name:"place_textboxes",arguments:arguments(["boxes":[answer]])); fatalError("Expected supplement rejection") } catch {}
+        assert(supplemented.boxes.count == 1)
+    }
+    answer["lines"] = Array(repeating:"A main point.",count:limit+1)
+    answer["supplements"] = [] as [[String:Any]]
+    do { try supplemented.apply(name:"place_textboxes",arguments:arguments(["boxes":[answer]])); fatalError("Main point limit must remain") } catch {}
+}
+for kind in ["explanation","example","case_study"] {
+    var answer = box("short",["第一点。","第二点。"])
+    answer["supplements"] = [["point":2,"kind":kind,"sentence":"这是补充。"]]
+    var result = BoardMarks()
+    try result.apply(name:"place_textboxes",arguments:arguments(["boxes":[answer]]))
+    assert(result.boxes[0].text == "第一点。 第二点。 这是补充。")
+}
+print("Passed: optional single-purpose supplements render after their point, bypass only main sentence quota, reject duplicates and multiple sentences")
+
 let toolData = try JSONSerialization.data(withJSONObject:drawingTools())
 assert(String(data:toolData,encoding:.utf8)!.contains("place_textboxes"))
-let cite: [[String:Any]] = [["content":[["annotations":[["url":"https://example.com"],["url":"file:///a"],["url":"https://example.com"]]]]]]
-assert(sourceURLs(cite).count == 1)
+for citation in ["Answer [1]", "Answer [1, 2]", "See https://example.com", "Answer citeturn0search0", "[Source](https://example.com)", "References: book"] {
+    do { try marks.apply(name:"place_textboxes",arguments:arguments(["boxes":[box("short",[citation])]])); fatalError("Expected citation rejection") } catch {}
+    var answer = box("short",["Main point."])
+    answer["supplements"] = [["point":1,"kind":"example","sentence":citation]]
+    do { try marks.apply(name:"place_textboxes",arguments:arguments(["boxes":[answer]])); fatalError("Expected supplementary citation rejection") } catch {}
+}
 do { _ = try responseOutput(Data("{\"status\":\"incomplete\"}".utf8)); fatalError("Expected incomplete rejection") } catch {}
 print("Passed: coordinate conversion, both drawing tools, all six answer modes, sentence limits, validation and sources")
 
@@ -75,6 +112,8 @@ try await annotate(image:Data([1,2,3]),key:"test-only",send:{ request in
     let body = try JSONSerialization.jsonObject(with:request.httpBody!) as! [String:Any]
     assert(body["model"] as? String == "gpt-6-astra")
     assert(body["store"] as? Bool == false)
+    assert((body["instructions"] as? String)?.contains("禁止 citation") == true)
+    assert((body["instructions"] as? String)?.contains("不能混合解释与举例或案例") == true)
     let input = body["input"] as! [[String:Any]]
     var output: [[String:Any]] = []
     if round == 1 {
@@ -89,7 +128,7 @@ try await annotate(image:Data([1,2,3]),key:"test-only",send:{ request in
     }
     let data = try JSONSerialization.data(withJSONObject:["status":"completed","output":output])
     return (data,HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:nil)!)
-},update:{ marks,_ in finalMarks = marks })
+},update:{ marks,sources in assert(sources.isEmpty); finalMarks = marks })
 assert(round == 3 && finalMarks.arrows.count == 1 && finalMarks.boxes.count == 1)
 print("Passed: agent tool loop corrects invalid positions, executes both tools, returns outputs and finishes without network")
 
@@ -150,3 +189,25 @@ do {
 } catch {}
 assert(clampedBoxOrigin(CGPoint(x:-20,y:900),size:CGSize(width:100,height:50),bounds:layoutBounds) == CGPoint(x:0,y:750))
 print("Passed: supplied prefixes render exactly, absent prefixes stay absent, invalid prefixes reject, box dragging stays inside canvas")
+
+for (prefix, expected) in [("1.","1.2 Paris"),("（3）","3.2 Paris"),("第4题","4.2 Paris"),("12.3.","12.3.2 Paris")] {
+    let blank = TextMark(x:0,y:0,width:500,height:200,kind:.fill,lines:["Paris"],questionPrefix:prefix,blankIndex:2)
+    assert(blank.text == expected)
+    var validated = BoardMarks()
+    try validated.apply(name:"place_textboxes",arguments:arguments(["boxes":[try JSONSerialization.jsonObject(with:JSONEncoder().encode(blank))]]))
+    assert(validated.boxes[0].text == expected)
+}
+for (kind,index) in [("fill",0),("fill",-1),("short",1)] {
+    var invalid = box(kind,["Answer."]); invalid["blank_index"] = index
+    do { try marks.apply(name:"place_textboxes",arguments:arguments(["boxes":[invalid]])); fatalError("Expected invalid blank index rejection") } catch {}
+}
+
+for area in [["x":100,"y":110,"width":300,"height":100], ["x":100,"y":900,"width":300,"height":200], ["x":500,"y":400,"width":200,"height":100]] {
+    var invalid = box("fill",["Answer"]); invalid["below_area"] = area
+    do { try marks.apply(name:"place_textboxes",arguments:arguments(["boxes":[invalid]])); fatalError("Expected invalid below area rejection") } catch {}
+}
+var withBelow = box("fill",["Answer"])
+withBelow["below_area"] = ["x":100,"y":400,"width":300,"height":100]
+var belowValidated = BoardMarks()
+try belowValidated.apply(name:"place_textboxes",arguments:arguments(["boxes":[withBelow]]))
+assert(belowValidated.boxes[0].belowArea?.y == 400)

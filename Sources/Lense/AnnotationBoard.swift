@@ -97,7 +97,20 @@ final class AnnotationBoard: NSView {
             if !sources.isEmpty {
                 occupied.append(CGRect(x:20,y:bounds.height-76,width:min(700,bounds.width-40),height:56))
             }
-            if manualFrames[mark] == nil {
+            let blankArea = CGRect(origin:origin,size:CGSize(width:mark.width/1000*selection.width,height:mark.height/1000*selection.height))
+            let fitsBlank = isFill && blankArea.contains(frame) && selection.contains(frame) &&
+                naturalWidth <= frame.width && !occupied.contains { $0.intersects(frame) }
+            var fitsBelow = false
+            if isFill && !fitsBlank, let area = mark.belowArea {
+                let available = CGRect(origin:markPoint(x:area.x,y:area.y,selection:selection),
+                                       size:CGSize(width:area.width/1000*selection.width,height:area.height/1000*selection.height))
+                let candidate = CGRect(x:origin.x,y:available.minY,width:naturalWidth,height:textHeight)
+                if available.contains(candidate) && bounds.insetBy(dx:8,dy:8).contains(candidate) &&
+                    !occupied.contains(where: { $0.insetBy(dx:-6,dy:-6).intersects(candidate) }) {
+                    frame = candidate; width = frame.width; fitsBelow = true
+                }
+            }
+            if manualFrames[mark] == nil && !fitsBlank && !fitsBelow {
                 guard let free = freeAnswerRect(size:CGSize(width:isFill ? naturalWidth : width,height:textHeight),near:origin,
                                                bounds:bounds,protected:selection,occupied:occupied,
                                                minimum:CGSize(width:isFill ? min(naturalWidth,40) : min(width,60),
@@ -185,7 +198,7 @@ final class AnnotationBoard: NSView {
             let origin = clampedBoxOrigin(CGPoint(x:movingOrigin.x+point.x-start.x,y:movingOrigin.y+point.y-start.y),size:box.frame.size,bounds:bounds)
             movedTextBox = true
             let candidate = CGRect(origin:origin,size:box.frame.size)
-            guard !candidate.intersects(selection) else { return }
+            guard mark.kind == .fill || !candidate.intersects(selection) else { return }
             box.setFrameOrigin(origin); manualFrames[mark] = box.frame
             return
         }
