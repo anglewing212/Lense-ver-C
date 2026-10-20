@@ -25,6 +25,8 @@ final class AnnotationBoard: NSView {
     private var manualFrames: [TextMark:CGRect] = [:]
     private var movingMark: TextMark?
     private var movingOrigin = CGPoint.zero
+    private var movedTextBox = false
+    var pasteboard = NSPasteboard.general
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
     init(frame:CGRect, selection:CGRect) {
@@ -91,16 +93,11 @@ final class AnnotationBoard: NSView {
             var textHeight = isFill ? ceil(font.ascender-font.descender+font.leading)+16 : (answerText as NSString).boundingRect(with:NSSize(width:width-20,height:CGFloat.greatestFiniteMagnitude),options:[.usesLineFragmentOrigin,.usesFontLeading],attributes:[.font:font]).height + 20
             let height = isFill ? textHeight : min(max(mark.height/1000*selection.height,textHeight,32),min(480,bounds.height-32))
             var frame = CGRect(x:max(8,min(origin.x,bounds.width-width-8)),y:max(8,min(origin.y,bounds.height-height-8)),width:width,height:height)
-            let proposedWidth = mark.width/1000*selection.width
-            let proposedHeight = mark.height/1000*selection.height
             var occupied = boxes.map { $0.frame }
             if !sources.isEmpty {
                 occupied.append(CGRect(x:20,y:bounds.height-76,width:min(700,bounds.width-40),height:56))
             }
-            let insufficient = (isFill && naturalWidth > proposedWidth+1) || width > proposedWidth+1 || textHeight > proposedHeight+1 ||
-                origin.x+width > bounds.maxX-8 || origin.y+textHeight > bounds.maxY-8 ||
-                occupied.contains { $0.intersects(frame) }
-            if manualFrames[mark] == nil && mark.kind != .notice && insufficient {
+            if manualFrames[mark] == nil {
                 guard let free = freeAnswerRect(size:CGSize(width:isFill ? naturalWidth : width,height:textHeight),near:origin,
                                                bounds:bounds,protected:selection,occupied:occupied,
                                                minimum:CGSize(width:isFill ? min(naturalWidth,40) : min(width,60),
@@ -174,7 +171,7 @@ final class AnnotationBoard: NSView {
     override func mouseDown(with event:NSEvent) {
         window?.makeKey(); window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow,from:nil)
-        dragStart = point; isDragging = false; movingMark = nil
+        dragStart = point; isDragging = false; movingMark = nil; movedTextBox = false
         if let box = boxes.last(where:{ !$0.isHidden && $0.frame.contains(point) }), let mark = boxMarks[ObjectIdentifier(box)] {
             movingMark = mark; movingOrigin = box.frame.origin
         }
@@ -186,6 +183,9 @@ final class AnnotationBoard: NSView {
             guard hypot(point.x-start.x,point.y-start.y)>3,
                   let box = boxes.first(where:{boxMarks[ObjectIdentifier($0)] == mark}) else { return }
             let origin = clampedBoxOrigin(CGPoint(x:movingOrigin.x+point.x-start.x,y:movingOrigin.y+point.y-start.y),size:box.frame.size,bounds:bounds)
+            movedTextBox = true
+            let candidate = CGRect(origin:origin,size:box.frame.size)
+            guard !candidate.intersects(selection) else { return }
             box.setFrameOrigin(origin); manualFrames[mark] = box.frame
             return
         }
@@ -198,7 +198,13 @@ final class AnnotationBoard: NSView {
     }
     override func mouseUp(with event:NSEvent) {
         mouseDragged(with:event)
-        if movingMark != nil { movingMark = nil; dragStart = nil; return }
+        if let mark = movingMark {
+            if !movedTextBox {
+                pasteboard.clearContents()
+                pasteboard.setString(mark.text,forType:.string)
+            }
+            movingMark = nil; dragStart = nil; return
+        }
         if isDragging {
             pendingSelection = dragRect.width >= 8 && dragRect.height >= 8 ? dragRect : nil
             if pendingSelection == nil { dragRect = .zero }

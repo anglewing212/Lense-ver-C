@@ -103,12 +103,23 @@ import AppKit
             assert(!fillScroll.frame.intersects(board.selection))
             let originalContent = fillText.string
             let initialFrame = fillScroll.frame
+            board.pasteboard = NSPasteboard.withUniqueName()
             let textPoint = CGPoint(x:initialFrame.midX,y:initialFrame.midY)
             let startY = board.bounds.height-textPoint.y
             board.mouseDown(with:mouse(.leftMouseDown,textPoint.x,startY))
-            board.mouseUp(with:mouse(.leftMouseUp,textPoint.x+70,startY+30))
+            board.mouseUp(with:mouse(.leftMouseUp,textPoint.x,startY))
+            assert(board.pasteboard.string(forType:.string) == fillMarks.boxes[0].text)
+            board.pasteboard.setString("unchanged",forType:.string)
+            board.mouseDown(with:mouse(.leftMouseDown,textPoint.x,startY))
+            board.mouseUp(with:mouse(.leftMouseUp,textPoint.x+70,startY))
+            assert(board.pasteboard.string(forType:.string) == "unchanged")
+            assert(!fillScroll.frame.intersects(board.selection))
             assert(fillScroll.frame.origin != initialFrame.origin && fillText.string == originalContent)
             assert(board.bounds.contains(fillScroll.frame) && sends == 1)
+            let safeFrame = fillScroll.frame
+            board.mouseDown(with:mouse(.leftMouseDown,safeFrame.midX,board.bounds.height-safeFrame.midY))
+            board.mouseUp(with:mouse(.leftMouseUp,safeFrame.midX,board.bounds.height-board.selection.midY))
+            assert(fillScroll.frame == safeFrame)
             let movedFrame = fillScroll.frame
             board.show(fillMarks,sources:[])
             let restoredScroll = board.subviews.compactMap { $0 as? NSScrollView }.first!
@@ -116,7 +127,7 @@ import AppKit
             assert((restoredScroll.documentView as! NSTextView).string == originalContent)
             print("Passed: textbox dragging keeps answer content, stays on canvas, preserves its position across updates and never submits a new question")
             var multiple = BoardMarks()
-            multiple.boxes = [TextMark(x:100,y:100,width:10,height:10,kind:.short,lines:["An answer that needs more room."]),
+            multiple.boxes = [TextMark(x:100,y:100,width:500,height:500,kind:.short,lines:["An answer that needs more room."]),
                               TextMark(x:200,y:200,width:10,height:10,kind:.math,lines:["2x + 3 = 11","x = 4"])]
             let layoutBoard = AnnotationBoard(frame:CGRect(x:0,y:0,width:1000,height:800),selection:CGRect(x:200,y:180,width:600,height:400))
             layoutBoard.show(multiple,sources:[])
