@@ -76,14 +76,17 @@ final class KeyPanel: NSPanel { override var canBecomeKey: Bool { true } }
         let list = windows ?? (CGWindowListCopyWindowInfo([.optionOnScreenOnly,.excludeDesktopElements],kCGNullWindowID) as? [[String:Any]] ?? [])
         let ownPID = ProcessInfo.processInfo.processIdentifier
         let blocked = list.contains { item in
-            guard let pid = item[kCGWindowOwnerPID as String] as? Int, pid != ownPID,
-                  let layer = item[kCGWindowLayer as String] as? Int, layer >= Int(NSWindow.Level.floating.rawValue),
+            let owner = item[kCGWindowOwnerName as String] as? String ?? ""
+            guard !["Dock", "Window Server", "SystemUIServer"].contains(owner),
+                  (item[kCGWindowAlpha as String] as? Double ?? 1) > 0,
+                  let pid = item[kCGWindowOwnerPID as String] as? Int, pid != ownPID,
+                  let layer = item[kCGWindowLayer as String] as? Int, layer >= Int(NSWindow.Level.popUpMenu.rawValue),
                   let dictionary = item[kCGWindowBounds as String] as? NSDictionary,
                   let rect = CGRect(dictionaryRepresentation:dictionary) else { return false }
-            return NSScreen.screens.contains { screen in
-                let screenRect = CGRect(x:screen.frame.minX,y:(NSScreen.screens.first?.frame.maxY ?? 0)-screen.frame.maxY,width:screen.frame.width,height:screen.frame.height)
+            return overlays.contains { panel in
+                let screenRect = CGRect(x:panel.frame.minX,y:(NSScreen.screens.first?.frame.maxY ?? 0)-panel.frame.maxY,width:panel.frame.width,height:panel.frame.height)
                 let area = rect.intersection(screenRect)
-                return !area.isNull && area.width >= 200 && area.height >= 100 && area.width*area.height >= screen.frame.width*screen.frame.height*0.15
+                return !area.isNull && area.width >= panel.frame.width*0.85 && area.height >= panel.frame.height*0.85
             }
         }
         guard blocked != yieldsToExternalOverlay else { return }
@@ -102,7 +105,7 @@ final class KeyPanel: NSPanel { override var canBecomeKey: Bool { true } }
         p.hidesOnDeactivate = false
         p.ignoresMouseEvents = false; p.hasShadow = false
         p.becomesKeyOnlyIfNeeded = false
-        p.isOpaque = false; p.backgroundColor = .clear; p.level = .floating
+        p.isOpaque = false; p.backgroundColor = .clear; p.level = .statusBar
         p.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary]; p.isReleasedWhenClosed = false
         return p
     }
@@ -159,7 +162,7 @@ final class KeyPanel: NSPanel { override var canBecomeKey: Bool { true } }
         }
         checkExternalOverlays()
         bubbleView.isOverlayActive = true
-        bubble.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
+        bubble.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
         bubble.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps:true)
     }

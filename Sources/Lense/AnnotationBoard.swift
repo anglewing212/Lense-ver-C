@@ -244,7 +244,7 @@ final class AnnotationBoard: NSView {
             path.move(to:CGPoint(x:tip.x-30,y:tip.y)); path.line(to:tip)
             path.move(to:CGPoint(x:tip.x-8,y:tip.y-6)); path.line(to:tip); path.line(to:CGPoint(x:tip.x-8,y:tip.y+6))
             path.lineCapStyle = .round; path.lineJoinStyle = .round
-            NSColor.red.setStroke()
+            NSColor.darkGray.setStroke()
             path.lineWidth = 1 / max(window?.backingScaleFactor ?? 1,1)
             path.stroke()
         }

@@ -30,10 +30,34 @@ import AppKit
             assert(owner.overlays.first?.contentView === board)
             owner.toggleOverlay()
             assert(owner.session.isVisible && panel.isVisible)
-            assert(panel.level == .floating)
+            assert(panel.level == .statusBar)
             let savedMarks = board.marks.arrows
             let foreignOverlay: [String:Any] = [kCGWindowOwnerPID as String:999999,
                 kCGWindowLayer as String:1000, kCGWindowBounds as String:NSScreen.main!.frame.dictionaryRepresentation]
+            var systemWindow = foreignOverlay
+            systemWindow[kCGWindowOwnerName as String] = "Dock"
+            owner.checkExternalOverlays(windows:[systemWindow])
+            assert(!owner.yieldsToExternalOverlay && !panel.ignoresMouseEvents)
+            systemWindow[kCGWindowOwnerName as String] = "Window Server"
+            owner.checkExternalOverlays(windows:[systemWindow])
+            assert(!owner.yieldsToExternalOverlay && !panel.ignoresMouseEvents)
+            var transparentWindow = foreignOverlay
+            transparentWindow[kCGWindowAlpha as String] = 0.0
+            owner.checkExternalOverlays(windows:[transparentWindow])
+            assert(!owner.yieldsToExternalOverlay && !panel.ignoresMouseEvents)
+            var otherScreenWindow = foreignOverlay
+            otherScreenWindow[kCGWindowBounds as String] = CGRect(x:10000,y:10000,width:1800,height:1200).dictionaryRepresentation
+            owner.checkExternalOverlays(windows:[otherScreenWindow])
+            assert(!owner.yieldsToExternalOverlay && !panel.ignoresMouseEvents)
+            var narrowFloatingWindow = foreignOverlay
+            narrowFloatingWindow[kCGWindowOwnerName as String] = "Wispr Flow"
+            narrowFloatingWindow[kCGWindowBounds as String] = CGRect(x:0,y:0,width:490,height:1067).dictionaryRepresentation
+            owner.checkExternalOverlays(windows:[narrowFloatingWindow])
+            assert(!owner.yieldsToExternalOverlay && !panel.ignoresMouseEvents)
+            var ordinaryFloatingWindow = foreignOverlay
+            ordinaryFloatingWindow[kCGWindowLayer as String] = NSWindow.Level.floating.rawValue
+            owner.checkExternalOverlays(windows:[ordinaryFloatingWindow])
+            assert(!owner.yieldsToExternalOverlay && !panel.ignoresMouseEvents)
             owner.checkExternalOverlays(windows:[foreignOverlay])
             assert(owner.yieldsToExternalOverlay && panel.ignoresMouseEvents && owner.bubble.ignoresMouseEvents)
             assert(owner.session.isVisible && panel.isVisible && board.marks.arrows == savedMarks)
